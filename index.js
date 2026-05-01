@@ -10,7 +10,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // 🔥 Ye humara secret password hai jo sirf humein aur Razorpay ko pata hoga
-const RAZORPAY_WEBHOOK_SECRET = "NgcEatsSecure123"; 
+const RAZORPAY_WEBHOOK_SECRET = "NgcEats_XyZ987#Secure$2026!WqL_Alpha";
 
 // 1. Basic Test Route (Check karne ke liye ki server zinda hai ya nahi)
 app.get('/', (req, res) => {
