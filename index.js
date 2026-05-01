@@ -2,53 +2,67 @@ const express = require('express');
 const crypto = require('crypto');
 const cors = require('cors');
 
+// 🔥 1. Firebase Admin Setup
+const admin = require('firebase-admin');
+const serviceAccount = require('./firebase-key.json'); // Ye file wahi honi chahiye
+
+// Firebase ko God Mode mein start karo
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+const db = admin.firestore();
+
 const app = express();
 app.use(cors());
-// Webhook ke liye raw data chahiye hota hai signature verify karne ke liye
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const RAZORPAY_WEBHOOK_SECRET = "NgcEats_XyZ987#Secure$2026!WqL_Alpha"; // Yahan apna wala khatarnak password rakhna
 
-// 🔥 Ye humara secret password hai jo sirf humein aur Razorpay ko pata hoga
-const RAZORPAY_WEBHOOK_SECRET = "NgcEats_XyZ987#Secure$2026!WqL_Alpha";
-
-// 1. Basic Test Route (Check karne ke liye ki server zinda hai ya nahi)
 app.get('/', (req, res) => {
     res.send("NGCEats Backend Engine is LIVE! 🚀");
 });
 
-// 2. 🔥 THE HACKPROOF WEBHOOK ROUTE
-app.post('/webhook', (req, res) => {
-    // Razorpay ne jo signature bheja hai
+// 🔥 DHYAN DE: Yahan (req, res) ke aage 'async' lagana zaroori hai Firebase chalane ke liye
+app.post('/webhook', async (req, res) => { 
     const razorpaySignature = req.headers['x-razorpay-signature'];
 
-    // Hum apne secret se apna signature banayenge
     const shasum = crypto.createHmac('sha256', RAZORPAY_WEBHOOK_SECRET);
     shasum.update(JSON.stringify(req.body));
     const expectedSignature = shasum.digest('hex');
 
-    // Asli Jadoo: Agar dono match ho gaye, matlab payment 100% REAL hai!
     if (expectedSignature === razorpaySignature) {
-        console.log("✅ Payment Verified 100% Securely!");
+        console.log("✅ Payment Verified!");
         
         const event = req.body.event;
 
-        // Jab payment successful hoti hai
-        if (event === 'payment.captured' || event === 'order.paid') {
+        if (event === 'payment.captured' || event === 'payment.authorized') {
             const paymentDetails = req.body.payload.payment.entity;
-            const amountPaid = paymentDetails.amount / 100; // Paise to Rupees
+            const amountPaid = paymentDetails.amount / 100;
             
-            console.log(`💰 Ekdum Asli Payment Received: ₹${amountPaid}`);
-            
-            // TODO: Next step mein hum yahan Firebase ko connect karenge 
-            // taaki Order status "Paid" ho jaye!
+            // 💡 THE MAGIC: Razorpay se Order ID nikalna
+            // (Android app se payment karte time humein 'notes' me orderId bhejna hoga)
+            const orderId = paymentDetails.notes.orderId; 
+
+            console.log(`💰 Payment Received: ₹${amountPaid} for Order: ${orderId}`);
+
+            if (orderId) {
+                try {
+                    // 🔥 2. Firebase mein us order ka status 'Paid' kar do!
+                    await db.collection('orders').doc(orderId).update({
+                        paymentStatus: 'Paid'
+                    });
+                    console.log(`✅ Order ${orderId} successfully marked as PAID in Firebase!`);
+                } catch (error) {
+                    console.log("❌ Firebase update error:", error);
+                }
+            } else {
+                console.log("⚠️ Order ID nahi mili Razorpay notes mein!");
+            }
         }
-        
-        // Razorpay ko bata do ki "Bhai message mil gaya, thank you!"
         res.status(200).send("OK");
     } else {
-        // Agar koi hacker fake request bhejega toh ye yahan pakda jayega!
-        console.log("❌ Hacker Alert! Fake Payment Request Blocked.");
+        console.log("❌ Hacker Alert! Fake Payment Blocked.");
         res.status(403).send("Invalid Signature");
     }
 });
