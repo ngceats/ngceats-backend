@@ -138,3 +138,82 @@ app.post('/webhook', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 NGC Eats Backend running on port ${PORT}`);
 });
+
+const Razorpay = require('razorpay');
+
+// 🔥 RAZORPAY INITIALIZE KARO 
+// (Apni Live ya Test Key aur Secret yahan daalna)
+const razorpay = new Razorpay({
+  key_id: "rzp_live_SZSVcD6UFK4igr", 
+  key_secret: "Hq8bLKEGsdiaGq1YN03sn1Yl"
+});
+
+// 🔥 THE MANUAL PAYOUT ENGINE (Admin App isko call karegi) 🔥
+app.post('/api/payout', async (req, res) => {
+    try {
+        const { linkedAccountId, amount, orderId } = req.body;
+
+        if (!linkedAccountId || !amount) {
+            return res.status(400).json({ error: "Linked Account ID aur Amount zaroori hai!" });
+        }
+
+        // Razorpay ko amount PAISE (paise) mein chahiye hota hai (e.g., 104.70 * 100 = 10470)
+        const transferAmount = Math.round(amount * 100);
+
+        // Razorpay Transfer API ko call karo (Direct transfer from your balance to Vendor)
+        const transfer = await razorpay.transfers.create({
+            account: linkedAccountId, // Restaurant ki 'acc_...' wali ID
+            amount: transferAmount,
+            currency: "INR",
+            notes: {
+                reason: "Manual Payout by Admin",
+                orderId: orderId || "Manual_Transfer"
+            }
+        });
+
+        console.log(`✅ Payout Successful: ₹${amount} sent to ${linkedAccountId}`);
+        
+        // Admin app ko batao ki success ho gaya
+        res.status(200).json({ success: true, transfer: transfer });
+
+    } catch (error) {
+        console.error("❌ Payout Failed:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+// 🔥 THE MANUAL REFUND ENGINE (Admin App isko call karegi) 🔥
+app.post('/api/refund', async (req, res) => {
+    try {
+        const { paymentId, amount, orderId, reason } = req.body;
+
+        // Payment ID (razorpayId) hona sabse zaroori hai
+        if (!paymentId) {
+            return res.status(400).json({ error: "Payment ID (razorpayId) zaroori hai!" });
+        }
+
+        const refundOptions = {
+            notes: {
+                order_id: orderId || "Unknown",
+                reason: reason || "Manual Refund by Admin"
+            }
+        };
+
+        // Agar specific amount bheja hai (Partial Refund), toh usko paise mein convert karo
+        // Agar amount nahi bheja, toh Razorpay automatically POORA paisa (Full Refund) wapas kar dega
+        if (amount) {
+            refundOptions.amount = Math.round(amount * 100); 
+        }
+
+        // Razorpay API ko Refund karne ka command do
+        const refund = await razorpay.payments.refund(paymentId, refundOptions);
+
+        console.log(`✅ Refund Successful: ₹${amount || "Full Amount"} refunded for Payment ID: ${paymentId}`);
+        
+        // Admin app ko batao ki refund initiate ho gaya hai
+        res.status(200).json({ success: true, refund: refund });
+
+    } catch (error) {
+        console.error("❌ Refund Failed:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
