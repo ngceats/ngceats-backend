@@ -52,17 +52,26 @@ app.post('/webhook', async (req, res) => {
                 console.log(`💰 Payment Received for Order: ${orderId}`);
 
                 if (orderId) {
-                    // 🔥 THE MAIN ENGINE: Global order dhoondo
-                    const ordersSnapshot = await db.collection("orders").where("id", "==", orderId).limit(1).get();
+                    // 🔥 THE FIX 1: Pehle root collection se order dhoondh kar uska userId nikalenge
+                    const stubDoc = await db.collection("orders").doc(orderId).get();
                     
-                    if (ordersSnapshot.empty) {
-                        console.log("⚠️ Order not found in DB!");
+                    if (!stubDoc.exists) {
+                        console.log("⚠️ Order not found in root DB!");
                         return res.status(200).send("OK");
                     }
 
-                    const orderDoc = ordersSnapshot.docs[0];
+                    const userId = stubDoc.data().userId;
+
+                    // 🔥 THE FIX 2: Ab User ke andar se poora Asli order nikalenge
+                    const userOrderRef = db.collection("users").doc(userId).collection("orders").doc(orderId);
+                    const orderDoc = await userOrderRef.get();
+
+                    if (!orderDoc.exists) {
+                        console.log("⚠️ Full order not found in User's collection!");
+                        return res.status(200).send("OK");
+                    }
+
                     const orderData = orderDoc.data();
-                    const userId = orderData.userId;
                     const resName = orderData.restaurantName;
                     const walletDiscount = orderData.walletDiscount || 0;
 
@@ -75,38 +84,36 @@ app.post('/webhook', async (req, res) => {
                         razorpayId: razorpayPaymentId
                     };
 
-                    // 1. Update Global Order
-                    batch.update(orderDoc.ref, updates);
+                    // 1. Update User's Order List
+                    batch.update(userOrderRef, updates);
+                    
+                    // 2. Wallet deduction (agar use kiya tha)
+                    if (walletDiscount > 0) {
+                        const userRef = db.collection("users").doc(userId);
+                        batch.update(userRef, {
+                            walletBalance: admin.firestore.FieldValue.increment(-walletDiscount)
+                        });
 
-                    // 2. Update User's Order List
-                    if (userId) {
-                        const userOrderRef = db.collection("users").doc(userId).collection("orders").doc(orderId);
-                        batch.update(userOrderRef, updates);
-                        
-                        // 3. Wallet deduction (agar use kiya tha)
-                        if (walletDiscount > 0) {
-                            const userRef = db.collection("users").doc(userId);
-                            batch.update(userRef, {
-                                walletBalance: admin.firestore.FieldValue.increment(-walletDiscount)
-                            });
-
-                            // Wallet Transaction Entry
-                            const txRef = db.collection("users").doc(userId).collection("transactions").doc();
-                            batch.set(txRef, {
-                                title: `Paid for Order at ${resName}`,
-                                amount: walletDiscount,
-                                type: "DEBIT",
-                                timestamp: Date.now(),
-                                orderId: orderId
-                            });
-                        }
+                        // Wallet Transaction Entry
+                        const txRef = db.collection("users").doc(userId).collection("transactions").doc();
+                        batch.set(txRef, {
+                            title: `Paid for Order at ${resName}`,
+                            amount: walletDiscount,
+                            type: "DEBIT",
+                            timestamp: Date.now(),
+                            orderId: orderId
+                        });
                     }
 
-                    // 4. Update Restaurant's Order List
+                    // 3. Update Restaurant's Order List
                     if (resName) {
                         const resOrderRef = db.collection("restaurants").doc(resName).collection("orders").doc(orderId);
-                        batch.update(resOrderRef, updates);
+                        batch.set(resOrderRef, { ...orderData, ...updates }, { merge: true });
                     }
+
+                    // 4. Update Global Order (Pehle wali choti entry ko poore data se overwrite kar denge)
+                    const globalOrderRef = db.collection("orders").doc(orderId);
+                    batch.set(globalOrderRef, { ...orderData, ...updates });
 
                     // BATCH COMMIT KARO
                     await batch.commit();
