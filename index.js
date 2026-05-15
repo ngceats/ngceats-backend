@@ -4,8 +4,12 @@ const cors = require('cors');
 
 // 🔥 1. Firebase Admin Setup
 const admin = require('firebase-admin');
-const serviceAccount = require('./firebase-key.json'); 
-
+let serviceAccount;
+try {
+    serviceAccount = require('/etc/secrets/firebase-key.json');
+} catch (error) {
+    serviceAccount = require('./firebase-key.json');
+}
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
